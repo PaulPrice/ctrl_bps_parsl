@@ -23,8 +23,9 @@ def get_workflow_filename(out_prefix: str) -> str:
     return os.path.join(out_prefix, "parsl_workflow.pickle")
 
 
-def set_parsl_logging(config: Config) -> int:
+def set_parsl_logging(config: BpsConfig) -> int:
     """Set parsl logging levels."""
+    config = Config(config)  # Workaround BpsConfig returning an empty string for missing keys
     level = config.get(".parsl.log_level", "INFO")
     if level not in ("CRITICAL", "DEBUG", "ERROR", "FATAL", "INFO", "WARN"):
         raise RuntimeError(f"Unrecognised parsl.log_level: {level}")
@@ -35,7 +36,8 @@ def set_parsl_logging(config: Config) -> int:
     return level
 
 
-def get_parsl_config(config: BpsConfig, path: str) -> parsl.config.Config:
+def get_parsl_config(bpsConfig: BpsConfig, path: str) -> parsl.config.Config:
+    config = Config(bpsConfig)  # Workaround BpsConfig returning an empty string for missing keys
     name = config[".parsl.module"]
     if not isinstance(name, str) or not name:
         raise RuntimeError(f"parsl.module ({name}) is not set to a module name")
@@ -58,7 +60,7 @@ def get_parsl_config(config: BpsConfig, path: str) -> parsl.config.Config:
 @dataclass
 class SiteConfig:
     executors: List[ParslExecutor]
-    select_executor: Callable[[ParslJob], str]
+    select_executor: Callable[["ParslJob"], str]
 
     @classmethod
     def from_config(cls, config: BpsConfig):

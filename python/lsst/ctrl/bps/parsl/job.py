@@ -1,12 +1,16 @@
+import re
 import enum
 import os
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Callable, Sequence, Dict
 
 from lsst.ctrl.bps import BpsConfig, GenericWorkflowJob
 from parsl.app.bash import BashApp
 from parsl.app.futures import Future
 
 __all__ = ("JobStatus", "ParslJob")
+
+_env_regex = re.compile(r'<ENV:(\S+)>')
+_file_regex = re.compile(r'<FILE:(\S+)>')
 
 
 def is_uuid(value):
@@ -15,8 +19,8 @@ def is_uuid(value):
     return sizes == (8, 4, 4, 4, 12)
 
 
-def get_parsl_job_name(bps_job_name: str, config: Optional[BpsConfig] = None):
-    """Extract a parsl job name from the GenericWorkflowJob name."""
+def get_group_name(bps_job_name: str, config: Optional[BpsConfig] = None):
+    """Extract a group name from the GenericWorkflowJob name."""
     # Get cluster names from any quantum clustering specification
     # in the bps config yaml.
     tokens = bps_job_name.split("_")
@@ -57,12 +61,15 @@ class ParslJob:
         self,
         generic: GenericWorkflowJob,
         config: BpsConfig,
+        file_paths: Dict[str, str],
         parents: Optional[Set["ParslJob"]] = None,
         children: Optional[Set["ParslJob"]] = None,
     ):
         self.generic = generic
-        self.name = get_parsl_job_name(generic.name, config)
+        self.name = generic.name
+        self.group = get_group_name(self.name, config)
         self.config = config
+        self.file_paths = file_paths
         self.parents: Set["ParslJob"] = set()
         self.children: Set["ParslJob"] = set()
         self._done: bool = False
@@ -75,7 +82,7 @@ class ParslJob:
         self._failed = os.path.join(log_dir, self.name + ".failed")
 
     def __reduce__(self):
-        return type(self), (self.generic, self.config, self.parents, self.children)
+        return type(self), (self.generic, self.config, self.file_paths, self.parents, self.children)
 
     def get_command_line(self):
         """Get the Bash command-line to run
@@ -87,12 +94,24 @@ class ParslJob:
         command = [
             self.generic.executable.src_uri,
             self.generic.arguments,
-            f" && touch {self.success} || (touch {self.failure}; false)",  # Leave a permanent record
+            f" && touch {self._succeeded} || (touch {self._failed}; false)",  # Leave a permanent record
         ]
         prefix = self.config.get("commandPrepend", "")
         if prefix:
             command.insert(0, prefix)
+
         return " ".join(command)
+
+    def evaluate_command_line(self, command):
+        """
+        Evaluate command line, replacing bps variables, fixing env vars,
+        and inserting job-specific file paths, all assuming that
+        everything is running on a shared file system.
+        """
+        command = command.format(**self.generic.cmdvals)  # BPS variables
+        command = re.sub(_env_regex, r'${\g<1>}', command)  # Environment variables
+        command = re.sub(_file_regex, lambda match: self.file_paths[match.group(1)], command)  # Files
+        return command
 
     def add_child(self, child: "ParslJob"):
         """
@@ -147,7 +166,7 @@ class ParslJob:
         self._status = self.check_status()
         return self._status
 
-    def get_future(self, app: BashApp, inputs: List[Future]) -> Optional[Future]:
+    def get_future(self, app: Callable[[str, Sequence[Future], Optional[str], Optional[str]], Future], inputs: List[Future]) -> Optional[Future]:
         """
         Get the parsl app future for the job to be run.
         """
@@ -157,5 +176,7 @@ class ParslJob:
             return self.future
         if self.failed:  # From a previous attempt
             os.remove(self._failed)
-        self.future = app(self.get_command_line(), inputs=inputs, stdout=self.stdout, stderr=self.stderr)
+        command = self.get_command_line()
+        command = self.evaluate_command_line(command)
+        self.future = app(command, inputs=inputs, stdout=self.stdout, stderr=self.stderr)
         return self.future

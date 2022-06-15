@@ -44,7 +44,7 @@ class ParslService(BaseWmsService):
         workflow : `lsst.ctrl.bps.BaseWmsWorkflow`
             Prepared WMS Workflow to submit for execution
         """
-        workflow.graph.run()
+        workflow.run()
 
     def restart(self, out_prefix: str) -> Tuple[str, str, str]:
         """Restart a workflow from the point of failure.

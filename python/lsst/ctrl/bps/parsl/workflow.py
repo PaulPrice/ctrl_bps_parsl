@@ -1,14 +1,46 @@
+import os
 import pickle
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence
 
 import parsl
 from lsst.ctrl.bps import BaseWmsWorkflow, BpsConfig, GenericWorkflow
 from parsl.app.app import bash_app
+from parsl.app.futures import Future
 
 from .configuration import SiteConfig, get_parsl_config, get_workflow_filename, set_parsl_logging
 from .job import ParslJob
 
 __all__ = ("ParslWorkflow",)
+
+
+def exportEnv():
+    """Generate bash script to regenerate the current environment"""
+    output = ""
+    for key, val in os.environ.items():
+        if key in ("DISPLAY",):
+            continue
+        if val.startswith("() {"):
+            # This is a function.
+            # "Two parentheses, a single space, and a brace"
+            # is exactly the same criterion as bash uses.
+
+            # From 2014-09-25, the function name is prefixed by 'BASH_FUNC_'
+            # and suffixed by '()', which we have to remove.
+            if key.startswith("BASH_FUNC_") and key.endswith("()"):
+                key = key[10:-2]
+
+            output += "{key} {val}\nexport -f {key}\n".format(key=key, val=val)
+        else:
+            # This is a variable.
+            output += "export {key}='{val}'\n".format(key=key, val=val.replace("'", "'\"'\"'"))
+    return output
+
+
+_env = exportEnv()
+
+
+def run_command(command_line: str, inputs: Sequence[Future] = (), stdout: Optional[str] = None, stderr: Optional[str] = None) -> str:
+    return _env + command_line
 
 
 class ParslWorkflow(BaseWmsWorkflow):
@@ -32,7 +64,7 @@ class ParslWorkflow(BaseWmsWorkflow):
         self.dfk: Optional[parsl.DataFlowKernel] = None  # type: ignore
 
         self.apps = {
-            ex.label: bash_app(executors=[ex.label], cache=True, ignore_for_cache=("stderr", "stdout"))
+            ex.label: bash_app(executors=[ex.label], cache=True, ignore_for_cache=["stderr", "stdout"])(run_command)
             for ex in self.site_config.executors
         }
 
@@ -66,11 +98,10 @@ class ParslWorkflow(BaseWmsWorkflow):
         # Generate list of tasks
         tasks: Dict[str, ParslJob] = {}
         for job_name in generic_workflow:
-            if job_name == "pipetaskInit":
-                continue
             job = generic_workflow.get_job(job_name)
             assert job.name not in tasks
-            tasks[job_name] = ParslJob(job, config)
+            file_paths = {ff.name: ff.src_uri for ff in generic_workflow.get_job_inputs(job_name)}
+            tasks[job_name] = ParslJob(job, config, file_paths)
 
         # Add dependencies
         for job_name in tasks:
@@ -89,6 +120,7 @@ class ParslWorkflow(BaseWmsWorkflow):
             Root directory to be used for WMS workflow inputs and outputs
             as well as internal WMS files.
         """
+        return  # XXX current implementation fails with "maximum recursion depth exceeded"
         filename = get_workflow_filename(out_prefix)
         with open(filename, "wb") as fd:
             pickle.dump(self, fd)

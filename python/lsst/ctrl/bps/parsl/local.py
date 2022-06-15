@@ -14,7 +14,7 @@ def get_executors(config: BpsConfig) -> List[ParslExecutor]:
     return [ThreadPoolExecutor("local", max_threads=cores)]
 
 
-def select_executor(job: ParslJob) -> str:
+def select_executor(job: "ParslJob") -> str:
     return "local"
 
 
