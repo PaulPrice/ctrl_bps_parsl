@@ -7,6 +7,8 @@ from lsst.ctrl.bps import BpsConfig, GenericWorkflowJob
 from parsl.app.bash import BashApp
 from parsl.app.futures import Future
 
+from .configuration import get_bps_config_value
+
 __all__ = ("JobStatus", "ParslJob")
 
 _env_regex = re.compile(r'<ENV:(\S+)>')
@@ -25,7 +27,7 @@ def get_group_name(bps_job_name: str, config: Optional[BpsConfig] = None):
     # in the bps config yaml.
     tokens = bps_job_name.split("_")
     if config is not None:
-        cluster_names = list(config["cluster"].keys())
+        cluster_names = list(get_bps_config_value(config, "cluster", "").keys())
         if tokens[0] in cluster_names:
             # In case of quantum clustering, we use the cluster name as
             # the task name.
@@ -75,7 +77,7 @@ class ParslJob:
         self._done: bool = False
         self._status = JobStatus.UNKNOWN
         self.future: Future = None
-        log_dir = os.path.join(self.config["submitPath"], "logs")
+        log_dir = os.path.join(get_bps_config_value(self.config, "submitPath"), "logs")
         self.stdout = os.path.join(log_dir, self.name + ".stdout")
         self.stderr = os.path.join(log_dir, self.name + ".stderr")
         self._succeeded = os.path.join(log_dir, self.name + ".succeeded")
@@ -96,7 +98,7 @@ class ParslJob:
             self.generic.arguments,
             f" && touch {self._succeeded} || (touch {self._failed}; false)",  # Leave a permanent record
         ]
-        prefix = self.config.get("commandPrepend", "")
+        prefix = get_bps_config_value(self.config, "commandPrepend", "")
         if prefix:
             command.insert(0, prefix)
 
