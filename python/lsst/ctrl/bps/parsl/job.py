@@ -1,6 +1,7 @@
 import re
 import enum
 import os
+import subprocess
 from typing import List, Optional, Set, Callable, Sequence, Dict
 
 from lsst.ctrl.bps import BpsConfig, GenericWorkflowJob
@@ -182,3 +183,14 @@ class ParslJob:
         command = self.evaluate_command_line(command)
         self.future = app(command, inputs=inputs, stdout=self.stdout, stderr=self.stderr)
         return self.future
+
+    def run_local(self):
+        if self.succeeded:  # From a previous attempt
+            return
+        if self.failed:  # From a previous attempt
+            os.remove(self._failed)
+        command = self.get_command_line()
+        command = self.evaluate_command_line(command)
+        subprocess.check_call(command, shell=True, executable="/bin/bash")
+        if not self.succeeded:
+            raise RuntimeError("Job failed when run locally")

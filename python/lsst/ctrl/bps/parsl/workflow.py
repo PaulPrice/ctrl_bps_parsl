@@ -1,6 +1,8 @@
 import os
 import pickle
+import shutil
 from typing import Dict, Optional, Sequence
+import subprocess
 
 import parsl
 from lsst.ctrl.bps import BaseWmsWorkflow, BpsConfig, GenericWorkflow
@@ -110,9 +112,13 @@ class ParslWorkflow(BaseWmsWorkflow):
         return self
 
     def run(self, block: bool = True):
+        self.initialize_jobs()
         self.start()
         endpoints = []
         for job in self.tasks.values():
+            if job.name == "pipetaskInit":
+                # Done as part of initialize_jobs
+                continue
             if job.children or job.done:
                 continue
             future = self.execute(job)
@@ -127,6 +133,7 @@ class ParslWorkflow(BaseWmsWorkflow):
             # before the futures resolve.
             for future in endpoints:
                 future.exception()
+            self.finalize_jobs()
         self.shutdown()
 
     def execute(self, job: ParslJob) -> Optional[parsl.app.futures.Future]:  # type: ignore
@@ -144,7 +151,7 @@ class ParslWorkflow(BaseWmsWorkflow):
         """Shutdown and dispose of the Parsl DataFlowKernel.  This will stop
         the monitoring and enable a new workflow to be created in the
         same python session.  No further jobs can be run from this
-        `ParslGraph` object once the DFK has been shutdown.
+        workflow object once the DFK has been shutdown.
         `ParslGraph.restore(...)` can be used to restart a workflow with
         a new DFK.
         """
@@ -153,3 +160,27 @@ class ParslWorkflow(BaseWmsWorkflow):
         self.dfk.cleanup()
         self.dfk = None
         parsl.DataFlowKernelLoader.clear()
+
+    def initialize_jobs(self):
+        job = self.tasks.get("pipetaskInit", None)
+        if job is None:
+            return
+        if not job.succeeded:
+            job.run_local()
+
+    def finalize_jobs(self):
+        """Run final job to transfer datasets from the execution butler to
+        the destination repo butler, and remove the temporaries"""
+        if self.config["executionButler"]["whenCreate"] == "NEVER":
+            return
+        submit_path = self.config["submitPath"]
+        exec_butler_template = self.config["executionButlerTemplate"]
+        command = " ".join((
+            "bash",
+            os.path.join(submit_path, "final_job.bash"),
+            self.config["butlerConfig"],
+            exec_butler_template,
+            ">&",
+            os.path.join(submit_path, "final_merge_job.log"),
+        ))
+        subprocess.check_call(command, shell=True, executable='/bin/bash')
