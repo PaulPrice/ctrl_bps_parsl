@@ -44,6 +44,7 @@ class ParslService(BaseWmsService):
         workflow : `lsst.ctrl.bps.BaseWmsWorkflow`
             Prepared WMS Workflow to submit for execution
         """
+        workflow.start()
         workflow.run()
 
     def restart(self, out_prefix: str) -> Tuple[str, str, str]:
@@ -68,5 +69,6 @@ class ParslService(BaseWmsService):
             If there were no issue, an empty string is returned.
         """
         workflow = ParslWorkflow.read(out_prefix)
+        workflow.restart()
         workflow.run()
         return workflow.name, workflow.name, ""

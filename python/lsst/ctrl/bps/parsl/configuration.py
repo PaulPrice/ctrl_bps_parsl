@@ -65,7 +65,7 @@ def get_parsl_config(bpsConfig: BpsConfig, path: str) -> parsl.config.Config:
     else:
         monitor = None
     retries = get_bps_config_value(bpsConfig, ".parsl.retries", 1)
-    return parsl.config.Config(executors=site.executors, monitoring=monitor, retries=retries)
+    return parsl.config.Config(executors=site.executors, monitoring=monitor, retries=retries, checkpoint_mode="task_exit")
 
 
 @dataclass

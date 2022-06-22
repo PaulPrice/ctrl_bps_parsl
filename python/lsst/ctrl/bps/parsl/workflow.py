@@ -1,5 +1,6 @@
 import os
 import pickle
+import logging
 from typing import Dict, Mapping, Optional, Sequence, Iterable
 
 import parsl
@@ -14,6 +15,8 @@ from .environment import export_environment
 __all__ = ("ParslWorkflow",)
 
 _env = export_environment()
+
+_log = logging.getLogger("lsst.ctrl.bps.parsl")
 
 
 def run_command(command_line: str, inputs: Sequence[Future] = (), stdout: Optional[str] = None, stderr: Optional[str] = None) -> str:
@@ -46,6 +49,8 @@ class ParslWorkflow(BaseWmsWorkflow):
         }
 
         self.tasks = tasks
+        self.parents = parents
+        self.endpoints = endpoints
         self.final = final
 
     def __reduce__(self):
@@ -101,8 +106,8 @@ class ParslWorkflow(BaseWmsWorkflow):
             Root directory to be used for WMS workflow inputs and outputs
             as well as internal WMS files.
         """
-        return  # XXX current implementation fails with "maximum recursion depth exceeded"
         filename = get_workflow_filename(out_prefix)
+        _log.info("Writing workflow with ID=%s", out_prefix)
         with open(filename, "wb") as fd:
             pickle.dump(self, fd)
 
@@ -115,10 +120,7 @@ class ParslWorkflow(BaseWmsWorkflow):
         return self
 
     def run(self, block: bool = True):
-        self.initialize_jobs()
-        self.start()
         futures = [self.execute(name) for name in self.endpoints]
-
         if block:
             # Calling .exception() for each future blocks returning
             # from this method until all the jobs have executed or
@@ -132,16 +134,30 @@ class ParslWorkflow(BaseWmsWorkflow):
             self.shutdown()
 
     def execute(self, name: str) -> Optional[parsl.app.futures.Future]:  # type: ignore
+        if name in ("pipetaskInit", "mergeExecutionButler"):
+            # These get done outside of parsl
+            return None
         job = self.tasks[name]
         inputs = [self.execute(parent) for parent in self.parents[name]]
-        label = self.site_config.select_executor(job)
+        if len(self.site_config.executors) > 1:
+            label = self.site_config.select_executor(job)
+        else:
+            label = self.site_config.executors[0].label
         return job.get_future(self.apps[label], [ff for ff in inputs if ff is not None])
 
-    def start(self):
+    def load_dfk(self):
         if self.dfk is not None:
             raise RuntimeError("Workflow has already started.")
         set_parsl_logging(self.bps_config)
         self.dfk = parsl.load(self.parsl_config)
+
+    def start(self):
+        self.initialize_jobs()
+        self.load_dfk()
+
+    def restart(self):
+        self.parsl_config.checkpoint_files = parsl.utils.get_last_checkpoint()
+        self.load_dfk()
 
     def shutdown(self):
         """Shutdown and dispose of the Parsl DataFlowKernel.  This will stop
@@ -159,15 +175,12 @@ class ParslWorkflow(BaseWmsWorkflow):
 
     def initialize_jobs(self):
         job = self.tasks.get("pipetaskInit", None)
-        if job is None:
-            return
-        if not job.succeeded:
+        if job is not None:
             os.makedirs(os.path.join(get_bps_config_value(self.bps_config, "submitPath"), "logs"))
             job.run_local()
 
     def finalize_jobs(self):
         """Run final job to transfer datasets from the execution butler to
         the destination repo butler, and remove the temporaries"""
-        if self.final is None or self.final.succeeded:
-            return
-        self.final.run_local()
+        if self.final is not None and not self.final.done:
+            self.final.run_local()

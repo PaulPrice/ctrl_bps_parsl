@@ -38,9 +38,10 @@ class ParslJob:
         file_paths: Dict[str, str],
     ):
         self.generic = generic
-        self.name = generic.label
+        self.name = generic.name
         self.config = config
         self.file_paths = file_paths
+        self.future = None
         self.done = False
         log_dir = os.path.join(get_bps_config_value(self.config, "submitPath"), "logs")
         self.stdout = os.path.join(log_dir, self.name + ".stdout")
@@ -125,9 +126,11 @@ class ParslJob:
         """
         if self.done:
             return None  # Nothing to do
-        command = self.get_command_line()
-        command = self.evaluate_command_line(command)
-        return app(command, inputs=inputs, stdout=self.stdout, stderr=self.stderr)
+        if not self.future:
+            command = self.get_command_line()
+            command = self.evaluate_command_line(command)
+            self.future = app(command, inputs=inputs, stdout=self.stdout, stderr=self.stderr)
+        return self.future
 
     def run_local(self):
         if self.done:  # Nothing to do
