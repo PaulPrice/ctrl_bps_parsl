@@ -5,12 +5,12 @@ from typing import Dict, Optional, Sequence
 import subprocess
 
 import parsl
-from lsst.ctrl.bps import BaseWmsWorkflow, BpsConfig, GenericWorkflow
+from lsst.ctrl.bps import BaseWmsWorkflow, BpsConfig, GenericWorkflow, GenericWorkflowJob
 from parsl.app.app import bash_app
 from parsl.app.futures import Future
 
-from .configuration import SiteConfig, get_parsl_config, get_workflow_filename, set_parsl_logging
-from .job import ParslJob
+from .configuration import SiteConfig, get_parsl_config, get_workflow_filename, set_parsl_logging, get_bps_config_value
+from .job import ParslJob, get_file_paths
 from .environment import export_environment
 
 __all__ = ("ParslWorkflow",)
@@ -32,7 +32,7 @@ class ParslWorkflow(BaseWmsWorkflow):
         Generic workflow config.
     """
 
-    def __init__(self, name: str, config: BpsConfig, path: str, tasks: Dict[str, ParslJob]):
+    def __init__(self, name: str, config: BpsConfig, path: str, tasks: Dict[str, ParslJob], final: Optional[ParslJob] = None):
         super().__init__(name, config)
         self.path = path
 
@@ -47,9 +47,10 @@ class ParslWorkflow(BaseWmsWorkflow):
         }
 
         self.tasks = tasks
+        self.final = final
 
     def __reduce__(self):
-        return type(self), (self.name, self.bps_config, self.path, self.tasks)
+        return type(self), (self.name, self.bps_config, self.path, self.tasks, self.final)
 
     @classmethod
     def from_generic_workflow(
@@ -78,8 +79,7 @@ class ParslWorkflow(BaseWmsWorkflow):
         for job_name in generic_workflow:
             job = generic_workflow.get_job(job_name)
             assert job.name not in tasks
-            file_paths = {ff.name: ff.src_uri for ff in generic_workflow.get_job_inputs(job_name)}
-            tasks[job_name] = ParslJob(job, config, file_paths)
+            tasks[job_name] = ParslJob(job, config, get_file_paths(generic_workflow, job_name))
 
         # Add dependencies
         for job_name in tasks:
@@ -87,7 +87,14 @@ class ParslWorkflow(BaseWmsWorkflow):
             for child in generic_workflow.successors(job_name):
                 parent.add_child(tasks[child])
 
-        return cls(generic_workflow.name, config, out_prefix, {job.name: job for job in tasks.values()})
+        # Add final job: execution butler merge (if whenMerge == ALWAYS)
+        job = generic_workflow.get_final()
+        final: Optional[ParslJob] = None
+        if job is not None:
+            assert isinstance(job, GenericWorkflowJob)
+            final = ParslJob(job, config, get_file_paths(generic_workflow, job.name))
+
+        return cls(generic_workflow.name, config, out_prefix, {job.name: job for job in tasks.values()}, final)
 
     def write(self, out_prefix: str):
         """Write WMS files for this particular workflow.
@@ -134,7 +141,7 @@ class ParslWorkflow(BaseWmsWorkflow):
             for future in endpoints:
                 future.exception()
             self.finalize_jobs()
-        self.shutdown()
+            self.shutdown()
 
     def execute(self, job: ParslJob) -> Optional[parsl.app.futures.Future]:  # type: ignore
         inputs = [self.execute(parent) for parent in job.parents]
@@ -166,21 +173,12 @@ class ParslWorkflow(BaseWmsWorkflow):
         if job is None:
             return
         if not job.succeeded:
+            os.makedirs(os.path.join(get_bps_config_value(self.bps_config, "submitPath"), "logs"))
             job.run_local()
 
     def finalize_jobs(self):
         """Run final job to transfer datasets from the execution butler to
         the destination repo butler, and remove the temporaries"""
-        if self.config["executionButler"]["whenCreate"] == "NEVER":
+        if self.final is None or self.final.succeeded:
             return
-        submit_path = self.config["submitPath"]
-        exec_butler_template = self.config["executionButlerTemplate"]
-        command = " ".join((
-            "bash",
-            os.path.join(submit_path, "final_job.bash"),
-            self.config["butlerConfig"],
-            exec_butler_template,
-            ">&",
-            os.path.join(submit_path, "final_merge_job.log"),
-        ))
-        subprocess.check_call(command, shell=True, executable='/bin/bash')
+        self.final.run_local()

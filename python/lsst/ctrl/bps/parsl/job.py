@@ -4,13 +4,13 @@ import os
 import subprocess
 from typing import List, Optional, Set, Callable, Sequence, Dict
 
-from lsst.ctrl.bps import BpsConfig, GenericWorkflowJob
+from lsst.ctrl.bps import BpsConfig, GenericWorkflow, GenericWorkflowJob
 from parsl.app.bash import BashApp
 from parsl.app.futures import Future
 
 from .configuration import get_bps_config_value
 
-__all__ = ("JobStatus", "ParslJob")
+__all__ = ("JobStatus", "get_file_paths", "ParslJob")
 
 _env_regex = re.compile(r'<ENV:(\S+)>')
 _file_regex = re.compile(r'<FILE:(\S+)>')
@@ -59,6 +59,10 @@ class JobStatus(enum.Enum):
     FAILED = 5
 
 
+def get_file_paths(workflow: GenericWorkflow, name: str) -> Dict[str, str]:
+    return {ff.name: ff.src_uri for ff in workflow.get_job_inputs(name)}
+
+
 class ParslJob:
     def __init__(
         self,
@@ -93,7 +97,6 @@ class ParslJob:
         We're not considering use of the execution butler here, so there's
         no staging to do.
         """
-        assert not self.generic.executable.transfer_executable  # Execution butler disabled; no staging
         command = [
             self.generic.executable.src_uri,
             self.generic.arguments,
@@ -191,6 +194,7 @@ class ParslJob:
             os.remove(self._failed)
         command = self.get_command_line()
         command = self.evaluate_command_line(command)
-        subprocess.check_call(command, shell=True, executable="/bin/bash")
+        with open(self.stdout, "w") as stdout, open(self.stderr, "w") as stderr:
+            subprocess.check_call(command, shell=True, executable="/bin/bash", stdout=stdout, stderr=stderr)
         if not self.succeeded:
             raise RuntimeError("Job failed when run locally")
