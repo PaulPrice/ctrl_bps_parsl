@@ -1,8 +1,6 @@
 import os
 import pickle
-import shutil
-from typing import Dict, Optional, Sequence
-import subprocess
+from typing import Dict, Mapping, Optional, Sequence, Iterable
 
 import parsl
 from lsst.ctrl.bps import BaseWmsWorkflow, BpsConfig, GenericWorkflow, GenericWorkflowJob
@@ -16,6 +14,7 @@ from .environment import export_environment
 __all__ = ("ParslWorkflow",)
 
 _env = export_environment()
+
 
 def run_command(command_line: str, inputs: Sequence[Future] = (), stdout: Optional[str] = None, stderr: Optional[str] = None) -> str:
     return _env + command_line
@@ -32,7 +31,7 @@ class ParslWorkflow(BaseWmsWorkflow):
         Generic workflow config.
     """
 
-    def __init__(self, name: str, config: BpsConfig, path: str, tasks: Dict[str, ParslJob], final: Optional[ParslJob] = None):
+    def __init__(self, name: str, config: BpsConfig, path: str, tasks: Dict[str, ParslJob], parents: Mapping[str, Iterable[str]], endpoints: Iterable[str], final: Optional[ParslJob] = None):
         super().__init__(name, config)
         self.path = path
 
@@ -50,7 +49,7 @@ class ParslWorkflow(BaseWmsWorkflow):
         self.final = final
 
     def __reduce__(self):
-        return type(self), (self.name, self.bps_config, self.path, self.tasks, self.final)
+        return type(self), (self.name, self.bps_config, self.path, self.tasks, self.parents, self.endpoints, self.final)
 
     @classmethod
     def from_generic_workflow(
@@ -81,11 +80,8 @@ class ParslWorkflow(BaseWmsWorkflow):
             assert job.name not in tasks
             tasks[job_name] = ParslJob(job, config, get_file_paths(generic_workflow, job_name))
 
-        # Add dependencies
-        for job_name in tasks:
-            parent = tasks[job_name]
-            for child in generic_workflow.successors(job_name):
-                parent.add_child(tasks[child])
+        parents = {name: set(generic_workflow.predecessors(name)) for name in tasks}
+        endpoints = [name for name in tasks if generic_workflow.out_degree(name) == 0]
 
         # Add final job: execution butler merge (if whenMerge == ALWAYS)
         job = generic_workflow.get_final()
@@ -94,7 +90,7 @@ class ParslWorkflow(BaseWmsWorkflow):
             assert isinstance(job, GenericWorkflowJob)
             final = ParslJob(job, config, get_file_paths(generic_workflow, job.name))
 
-        return cls(generic_workflow.name, config, out_prefix, {job.name: job for job in tasks.values()}, final)
+        return cls(generic_workflow.name, config, out_prefix, tasks, parents, endpoints, final)
 
     def write(self, out_prefix: str):
         """Write WMS files for this particular workflow.
@@ -121,16 +117,7 @@ class ParslWorkflow(BaseWmsWorkflow):
     def run(self, block: bool = True):
         self.initialize_jobs()
         self.start()
-        endpoints = []
-        for job in self.tasks.values():
-            if job.name == "pipetaskInit":
-                # Done as part of initialize_jobs
-                continue
-            if job.children or job.done:
-                continue
-            future = self.execute(job)
-            if future is not None:
-                endpoints.append(future)
+        futures = [self.execute(name) for name in self.endpoints]
 
         if block:
             # Calling .exception() for each future blocks returning
@@ -138,15 +125,17 @@ class ParslWorkflow(BaseWmsWorkflow):
             # raised an error.  This is needed for running in a
             # non-interactive python process that would otherwise end
             # before the futures resolve.
-            for future in endpoints:
-                future.exception()
+            for ff in futures:
+                if ff is not None:
+                    ff.exception()
             self.finalize_jobs()
             self.shutdown()
 
-    def execute(self, job: ParslJob) -> Optional[parsl.app.futures.Future]:  # type: ignore
-        inputs = [self.execute(parent) for parent in job.parents]
+    def execute(self, name: str) -> Optional[parsl.app.futures.Future]:  # type: ignore
+        job = self.tasks[name]
+        inputs = [self.execute(parent) for parent in self.parents[name]]
         label = self.site_config.select_executor(job)
-        return job.get_future(self.apps[label], inputs)
+        return job.get_future(self.apps[label], [ff for ff in inputs if ff is not None])
 
     def start(self):
         if self.dfk is not None:
