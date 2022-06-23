@@ -4,6 +4,7 @@ from lsst.ctrl.bps import BpsConfig
 from parsl.executors import ThreadPoolExecutor
 from parsl.executors.base import ParslExecutor
 from parsl.monitoring.monitoring import MonitoringHub
+from parsl.addresses import address_by_hostname
 
 from .configuration import get_bps_config_value
 
@@ -22,3 +23,7 @@ def select_executor(job: "ParslJob") -> str:
 
 def get_monitor(config: BpsConfig) -> MonitoringHub:
     pass
+
+
+def get_address() -> str:
+    return address_by_hostname()

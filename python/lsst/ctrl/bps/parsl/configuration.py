@@ -78,6 +78,7 @@ def set_parsl_logging(config: BpsConfig) -> int:
     for name in logging.root.manager.loggerDict:
         if name.startswith("parsl"):
                 logging.getLogger(name).setLevel(level)
+    logging.getLogger("database_manager").setLevel(logging.INFO)
     return level
 
 

@@ -32,8 +32,8 @@ class ParslWorkflow(BaseWmsWorkflow):
 
     def __init__(self, name: str, config: BpsConfig, path: str, tasks: Dict[str, ParslJob], parents: Mapping[str, Iterable[str]], endpoints: Iterable[str], final: Optional[ParslJob] = None):
         super().__init__(name, config)
-        self.path = path
 
+        self.path = path
         self.bps_config = config
         self.parsl_config = get_parsl_config(config, path)
         self.site_config = SiteConfig.from_config(config)
