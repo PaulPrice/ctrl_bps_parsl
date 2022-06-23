@@ -8,7 +8,7 @@ from parsl.monitoring import MonitoringHub
 from parsl.providers import SlurmProvider
 from parsl.addresses import address_by_hostname, address_by_interface
 
-from .configuration import get_bps_config_value, require_bps_config_value
+from .configuration import get_bps_config_value, require_bps_config_value, get_workflow_name
 from .environment import export_environment
 
 if TYPE_CHECKING:
@@ -21,10 +21,7 @@ def make_executor(config: BpsConfig, *, site: str = "slurm", label: str = None, 
     walltime = require_bps_config_value(config, f".site.{site}.walltime", str, walltime)
     mem_per_node = get_bps_config_value(config, f".site.{site}.mem_per_node", mem_per_node)
 
-    project = get_bps_config_value(config, "project", "bps")
-    campaign = get_bps_config_value(config, "campaign", get_bps_config_value(config, "operator"))
-    job_name = f"{project}.{campaign}"
-
+    job_name = get_workflow_name(config)
     if scheduler_options is None:
         scheduler_options = ""
     scheduler_options += f"\n#SBATCH --job-name={job_name}"

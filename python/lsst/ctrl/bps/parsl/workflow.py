@@ -19,10 +19,6 @@ _env = export_environment()
 _log = logging.getLogger("lsst.ctrl.bps.parsl")
 
 
-def run_command(command_line: str, inputs: Sequence[Future] = (), stdout: Optional[str] = None, stderr: Optional[str] = None) -> str:
-    return _env + command_line
-
-
 class ParslWorkflow(BaseWmsWorkflow):
     """Parsl-based workflow object to manage execution of workflow.
 
@@ -43,8 +39,11 @@ class ParslWorkflow(BaseWmsWorkflow):
         self.site_config = SiteConfig.from_config(config)
         self.dfk: Optional[parsl.DataFlowKernel] = None  # type: ignore
 
+        self.command_prefix = export_environment() if self.site_config.add_environment else ""
+
+        # these are function decorators
         self.apps = {
-            ex.label: bash_app(executors=[ex.label], cache=True, ignore_for_cache=["stderr", "stdout"])(run_command)
+            ex.label: bash_app(executors=[ex.label], cache=True, ignore_for_cache=["stderr", "stdout"])
             for ex in self.site_config.executors
         }
 
@@ -143,7 +142,7 @@ class ParslWorkflow(BaseWmsWorkflow):
             label = self.site_config.select_executor(job)
         else:
             label = self.site_config.executors[0].label
-        return job.get_future(self.apps[label], [ff for ff in inputs if ff is not None])
+        return job.get_future(self.apps[label], [ff for ff in inputs if ff is not None], self.command_prefix)
 
     def load_dfk(self):
         if self.dfk is not None:

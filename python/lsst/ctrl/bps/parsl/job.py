@@ -3,6 +3,7 @@ import enum
 import os
 import subprocess
 from typing import List, Optional, Callable, Sequence, Dict
+from functools import partial
 
 from lsst.ctrl.bps import BpsConfig, GenericWorkflow, GenericWorkflowJob
 from parsl.app.futures import Future
@@ -24,6 +25,10 @@ class JobStatus(enum.Enum):
     RUNNING = 3
     SUCCEEDED = 4
     FAILED = 5
+
+
+def run_command(command_line: str, inputs: Sequence[Future] = (), stdout: Optional[str] = None, stderr: Optional[str] = None) -> str:
+    return command_line
 
 
 def get_file_paths(workflow: GenericWorkflow, name: str) -> Dict[str, str]:
@@ -78,49 +83,7 @@ class ParslJob:
         command = re.sub(_file_regex, lambda match: self.file_paths[match.group(1)], command)  # Files
         return command
 
-    # @property
-    # def done(self):
-    #     """
-    #     Execution state of the job based on status in monintoring.db
-    #     or whether the job has written the 'success' string to the end
-    #     of its log file.
-    #     """
-    #     if self._done:
-    #         return True
-    #     if self.status == JobStatus.SUCCEEDED:
-    #         self._done = True
-    #     if self.future is None:
-    #         return False
-    #     return self._done
-
-    # @property
-    # def succeeded(self):
-    #     return os.path.exists(self._succeeded)
-
-    # @property
-    # def failed(self):
-    #     return os.path.exists(self._failed)
-
-    # def check_status(self):
-    #     if not self.future:
-    #         if self.succeeded:
-    #             return JobStatus.SUCCEEDED
-    #         if self.failed:
-    #             return JobStatus.FAILED
-    #         return JobStatus.PENDING
-    #     if self.future.done():
-    #         return JobStatus.SUCCEEDED if self.future.exception() is None else JobStatus.FAILED
-    #     return JobStatus.RUNNING if self.future.running() else JobStatus.SCHEDULED
-
-    # @property
-    # def status(self):
-    #     """Return the job status"""
-    #     if self._status in (JobStatus.SUCCEEDED, JobStatus.FAILED):  # Once set, these don't change
-    #         return self._status
-    #     self._status = self.check_status()
-    #     return self._status
-
-    def get_future(self, app: Callable[[str, Sequence[Future], Optional[str], Optional[str]], Future], inputs: List[Future]) -> Optional[Future]:
+    def get_future(self, app: Callable[[str, Sequence[Future], Optional[str], Optional[str]], Future], inputs: List[Future], command_prefix: Optional[str] = None) -> Optional[Future]:
         """
         Get the parsl app future for the job to be run.
         """
@@ -129,7 +92,14 @@ class ParslJob:
         if not self.future:
             command = self.get_command_line()
             command = self.evaluate_command_line(command)
-            self.future = app(command, inputs=inputs, stdout=self.stdout, stderr=self.stderr)
+            if command_prefix:
+                command = command_prefix + "\n" + command
+
+            # Add a layer of indirection to which we can add a useful name
+            func = partial(run_command)
+            func.__name__ = self.generic.label
+
+            self.future = app(func)(command, inputs=inputs, stdout=self.stdout, stderr=self.stderr)
         return self.future
 
     def run_local(self):

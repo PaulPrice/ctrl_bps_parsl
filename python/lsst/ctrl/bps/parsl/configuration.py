@@ -20,16 +20,20 @@ class SiteConfig:
     executors: List[ParslExecutor]
     select_executor: Callable[["ParslJob"], str]
     get_address: Callable[[], str]
+    add_environment: bool = True
 
     @classmethod
     def from_config(cls, config: BpsConfig):
-        name = get_bps_config_value(config, ".parsl.module")
+        computeSite = get_bps_config_value(config, "computeSite")
+        module = f".site.{computeSite}.module"
+        name = get_bps_config_value(config, module)
         if not isinstance(name, str) or not name:
-            raise RuntimeError(f"parsl.module ({name}) is not set to a module name")
+            raise RuntimeError(f"{module}={name} is not set to a module name")
         executors = doImport(name + ".get_executors")(config)
         select_executor = doImport(name + ".select_executor")
         get_address = doImport(name + ".get_address")
-        return cls(executors, select_executor, get_address)
+        add_environment = get_bps_config_value(config, f".site.{computeSite}.environment", True)
+        return cls(executors, select_executor, get_address, add_environment)
 
 
 _NO_DEFAULT = object()
@@ -55,8 +59,10 @@ def require_bps_config_value(config: BpsConfig, name: str, dataType: type, defau
     return value
 
 
-def get_monitor_filename(out_prefix: str) -> str:
-    return os.path.join(out_prefix, "monitor.sqlite")
+def get_workflow_name(config: BpsConfig) -> str:
+    project = get_bps_config_value(config, "project", "bps")
+    campaign = get_bps_config_value(config, "campaign", get_bps_config_value(config, "operator"))
+    return f"{project}.{campaign}"
 
 
 def get_workflow_filename(out_prefix: str) -> str:
@@ -71,17 +77,19 @@ def set_parsl_logging(config: BpsConfig) -> int:
     level = getattr(logging, level)
     for name in logging.root.manager.loggerDict:
         if name.startswith("parsl"):
-            logging.getLogger(name).setLevel(level)
+                logging.getLogger(name).setLevel(level)
     return level
 
 
 def get_parsl_config(config: BpsConfig, path: str) -> parsl.config.Config:
-    name = get_bps_config_value(config, ".parsl.module")
+    computeSite = get_bps_config_value(config, "computeSite")
+    module = f".site.{computeSite}.module"
+    name = get_bps_config_value(config, module)
     if not isinstance(name, str) or not name:
-        raise RuntimeError(f"parsl.module ({name}) is not set to a module name")
+        raise RuntimeError(f"{module}={name} is not set to a module name")
     site = SiteConfig.from_config(config)
     retries = get_bps_config_value(config, ".parsl.retries", 1)
-    monitor = None # get_parsl_monitor(config, site)
+    monitor = get_parsl_monitor(config, site)
     return parsl.config.Config(executors=site.executors, monitoring=monitor, retries=retries, checkpoint_mode="task_exit")
 
 
@@ -91,7 +99,8 @@ def get_parsl_monitor(config: BpsConfig, site: Optional[SiteConfig] = None) -> O
     if site is None:
         site = SiteConfig.from_config(config)
     return MonitoringHub(
+        workflow_name=get_workflow_name(config),
         hub_address=site.get_address(),
         resource_monitoring_interval=get_bps_config_value(config, ".parsl.monitor.interval", 30),
-        logging_endpoint="sqlite://" + get_bps_config_value(config, ".parsl.monitor.filename", "monitor.sqlite"),
+        logging_endpoint="sqlite:///" + get_bps_config_value(config, ".parsl.monitor.filename", "monitor.sqlite"),
     )
