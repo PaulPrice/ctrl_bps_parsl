@@ -1,7 +1,7 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, List, Any
+from typing import TYPE_CHECKING, Callable, List, Any, Optional
 
 import parsl.config
 from lsst.ctrl.bps import BpsConfig
@@ -15,7 +15,25 @@ if TYPE_CHECKING:
     from .job import ParslJob
 
 
+@dataclass
+class SiteConfig:
+    executors: List[ParslExecutor]
+    select_executor: Callable[["ParslJob"], str]
+    get_address: Callable[[], str]
+
+    @classmethod
+    def from_config(cls, config: BpsConfig):
+        name = get_bps_config_value(config, ".parsl.module")
+        if not isinstance(name, str) or not name:
+            raise RuntimeError(f"parsl.module ({name}) is not set to a module name")
+        executors = doImport(name + ".get_executors")(config)
+        select_executor = doImport(name + ".select_executor")
+        get_address = doImport(name + ".get_address")
+        return cls(executors, select_executor, get_address)
+
+
 _NO_DEFAULT = object()
+
 
 def get_bps_config_value(config: BpsConfig, key: str, default: Any = _NO_DEFAULT):
     """This is how BpsConfig.__getitem__ and BpsConfig.get should behave"""
@@ -25,6 +43,15 @@ def get_bps_config_value(config: BpsConfig, key: str, default: Any = _NO_DEFAULT
     found, value = config.search(key, options)
     if not found and default is _NO_DEFAULT:
         raise KeyError(f"No value found for {key} and no default provided")
+    return value
+
+
+def require_bps_config_value(config: BpsConfig, name: str, dataType: type, default: Optional[Any] = None):
+    value = get_bps_config_value(config, name, default)
+    if value is None:
+        raise RuntimeError(f"Configuration value {name} must be set")
+    if not isinstance(value, dataType):
+        raise RuntimeError(f"Configuration value {name}={value} is not of type {dataType}")
     return value
 
 
@@ -48,37 +75,23 @@ def set_parsl_logging(config: BpsConfig) -> int:
     return level
 
 
-def get_parsl_config(bpsConfig: BpsConfig, path: str) -> parsl.config.Config:
-    name = get_bps_config_value(bpsConfig, ".parsl.module")
+def get_parsl_config(config: BpsConfig, path: str) -> parsl.config.Config:
+    name = get_bps_config_value(config, ".parsl.module")
     if not isinstance(name, str) or not name:
         raise RuntimeError(f"parsl.module ({name}) is not set to a module name")
-    site = SiteConfig.from_config(bpsConfig)
-    address = bpsConfig.get(".parsl.address", None)
-    if address is None:
-        address = address_by_hostname()
-    if False:
-        monitor = MonitoringHub(
-            hub_address=address,
-            resource_monitoring_interval=60,
-            logging_endpoint="sqlite://" + os.path.join(path, "monitor.sqlite"),
-        )
-    else:
-        monitor = None
-    retries = get_bps_config_value(bpsConfig, ".parsl.retries", 1)
+    site = SiteConfig.from_config(config)
+    retries = get_bps_config_value(config, ".parsl.retries", 1)
+    monitor = None # get_parsl_monitor(config, site)
     return parsl.config.Config(executors=site.executors, monitoring=monitor, retries=retries, checkpoint_mode="task_exit")
 
 
-@dataclass
-class SiteConfig:
-    executors: List[ParslExecutor]
-    select_executor: Callable[["ParslJob"], str]
-
-    @classmethod
-    def from_config(cls, config: BpsConfig):
-        name = get_bps_config_value(config, ".parsl.module")
-        if not isinstance(name, str) or not name:
-            raise RuntimeError(f"parsl.module ({name}) is not set to a module name")
-        executors = doImport(name + ".get_executors")(config)
-        select_executor = doImport(name + ".select_executor")
-        # monitor = doImport(name + ".get_monitor")(config)
-        return cls(executors, select_executor)
+def get_parsl_monitor(config: BpsConfig, site: Optional[SiteConfig] = None) -> Optional[MonitoringHub]:
+    if not get_bps_config_value(config, ".parsl.monitor.enable", False):
+        return None
+    if site is None:
+        site = SiteConfig.from_config(config)
+    return MonitoringHub(
+        hub_address=site.get_address(),
+        resource_monitoring_interval=get_bps_config_value(config, ".parsl.monitor.interval", 30),
+        logging_endpoint="sqlite://" + get_bps_config_value(config, ".parsl.monitor.filename", "monitor.sqlite"),
+    )
