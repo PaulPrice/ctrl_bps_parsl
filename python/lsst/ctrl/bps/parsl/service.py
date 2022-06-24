@@ -13,8 +13,7 @@ class ParslService(BaseWmsService):
     def prepare(
         self, config: BpsConfig, generic_workflow: GenericWorkflow, out_prefix: str = None
     ) -> BaseWmsWorkflow:
-        """
-        Convert a generic workflow to a Parsl pipeline.
+        """Convert a generic workflow to a Parsl pipeline.
 
         Parameters
         ----------
@@ -27,7 +26,8 @@ class ParslService(BaseWmsService):
 
         Returns
         -------
-        ParslWorkflow
+        workflow : `ParslWorkflow`
+            Workflow that will execute the jobs.
         """
         service_class = self.__class__.__module__ + "." + self.__class__.__name__
         if out_prefix is None:
