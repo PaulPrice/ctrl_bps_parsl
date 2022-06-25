@@ -84,14 +84,14 @@ class ParslWorkflow(BaseWmsWorkflow):
         self.path = path
         self.bps_config = config
         self.parsl_config = get_parsl_config(config)
-        self.site_config = SiteConfig.from_config(config)
+        self.site = SiteConfig.from_config(config)
         self.dfk: Optional[parsl.DataFlowKernel] = None  # type: ignore
-        self.command_prefix = self.site_config.get_command_prefix()
+        self.command_prefix = self.site.get_command_prefix()
 
         # these are function decorators
         self.apps = {
             ex.label: bash_app(executors=[ex.label], cache=True, ignore_for_cache=["stderr", "stdout"])
-            for ex in self.executors
+            for ex in self.parsl_config.executors
         }
 
         self.jobs = jobs
@@ -241,7 +241,7 @@ class ParslWorkflow(BaseWmsWorkflow):
         inputs = [self.execute(parent) for parent in self.parents[name]]
         executors = self.parsl_config.executors
         if len(executors) > 1:
-            label = self.site_config.select_executor(job)
+            label = self.site.select_executor(job)
         else:
             label = executors[0].label
         return job.get_future(self.apps[label], [ff for ff in inputs if ff is not None], self.command_prefix)

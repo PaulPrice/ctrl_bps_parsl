@@ -73,8 +73,8 @@ class SiteConfig(ABC):
             Site configuration.
         """
         site = cls.get_site_subconfig(config)
-        name = get_bps_config_value(site, "class", str)
-        return doImport(name)
+        name = get_bps_config_value(site, "class", str, required=True)
+        return doImport(name)(config)
 
     @abstractmethod
     def get_executors(self) -> List[ParslExecutor]:

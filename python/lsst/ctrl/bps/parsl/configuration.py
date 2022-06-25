@@ -53,7 +53,7 @@ def get_bps_config_value(
     RuntimeError
         If the value is not set or is of the wrong type.
     """
-    options = dict(expandEnvVars=True, replaceVars=True, required=True)
+    options = dict(expandEnvVars=True, replaceVars=True, required=required)
     if default is not None:
         options["default"] = default
     found, value = config.search(key, options)

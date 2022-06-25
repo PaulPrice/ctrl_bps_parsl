@@ -33,8 +33,8 @@ class Slurm(SiteConfig):
     - ``cores_per_node`` (`int`): number of cores per node for each Slurm job;
       by default we use all cores on the node.
     - ``walltime`` (`str`): time limit for each Slurm job.
-    - ``mem_per_node`` (`float`): memory per node for each Slurm job; by default
-      we use whatever Slurm gives us.
+    - ``mem_per_node`` (`int`): memory per node (GB) for each Slurm job; by
+      default we use whatever Slurm gives us.
     - ``qos`` (`str`): quality of service to request for each Slurm job; by
       default we use whatever Slurm gives us.
     """
@@ -46,7 +46,7 @@ class Slurm(SiteConfig):
         nodes: Optional[int] = None,
         cores_per_node: Optional[int] = None,
         walltime: Optional[str] = None,
-        mem_per_node: Optional[float] = None,
+        mem_per_node: Optional[int] = None,
         mem_per_worker: Optional[float] = None,
         qos: Optional[str] = None,
         constraint: Optional[str] = None,
@@ -90,19 +90,20 @@ class Slurm(SiteConfig):
             Executor for Slurm jobs.
         """
         nodes = get_bps_config_value(self.site, "nodes", int, nodes, required=True)
-        cores_per_node = get_bps_config_value(self.site, "cores_per_node", int)
+        cores_per_node = get_bps_config_value(self.site, "cores_per_node", int, cores_per_node)
         walltime = get_bps_config_value(self.site, "walltime", str, walltime, required=True)
-        mem_per_node = get_bps_config_value(self.site, "mem_per_node", float, mem_per_node)
+        mem_per_node = get_bps_config_value(self.site, "mem_per_node", int, mem_per_node)
         qos = get_bps_config_value(self.site, "qos", str, qos)
 
         job_name = get_workflow_name(self.config)
         if scheduler_options is None:
             scheduler_options = ""
-        scheduler_options += f"\n#SBATCH --job-name={job_name}"
+        scheduler_options += "\n"
+        scheduler_options += f"#SBATCH --job-name={job_name}\n"
         if qos is not None:
-            scheduler_options += f"\nSBATCH --qos={qos}"
+            scheduler_options += f"#SBATCH --qos={qos}\n"
         if constraint is not None:
-            scheduler_options += f"\nSBATCH --constraint={qos}"
+            scheduler_options += f"#SBATCH --constraint={constraint}\n"
         if singleton:
             # The following SBATCH directives allow only a single slurm job (parsl
             # block) with our job_name to run at once. This means we can have one job
@@ -110,7 +111,7 @@ class Slurm(SiteConfig):
             # limit. More backups could be achieved with a larger value of max_blocks.
             # This only allows one job to be actively running at once, so that needs
             # to be sized appropriately by the user.
-            scheduler_options += "\n#SBATCH --dependency=singleton"
+            scheduler_options += "#SBATCH --dependency=singleton\n"
         return HighThroughputExecutor(
             label,
             provider=SlurmProvider(
@@ -122,6 +123,7 @@ class Slurm(SiteConfig):
                 **(provider_options or {}),
             ),
             mem_per_worker=mem_per_worker,
+            address=self.get_address(),
             **(executor_options or {}),
         )
 
