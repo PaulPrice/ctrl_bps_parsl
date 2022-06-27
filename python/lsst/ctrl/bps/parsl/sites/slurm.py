@@ -171,11 +171,11 @@ class TripleSlurm(Slurm):
     - ``qos`` (`str`): quality of service to request for each Slurm job; by
       default we use whatever Slurm gives us.
 
-    - ``small_memory`` (`float`): memory per worker for each 'small' Slurm job.
-    - ``medium_memory`` (`float`): memory per worker for each 'small' Slurm job.
-    - ``large_memory`` (`float`): memory per worker for each 'large' Slurm job.
+    - ``small_memory`` (`float`): memory per worker (GB) for each 'small' Slurm job.
+    - ``medium_memory`` (`float`): memory per worker (GB) for each 'medium' Slurm job.
+    - ``large_memory`` (`float`): memory per worker (GB) for each 'large' Slurm job.
     - ``small_walltime`` (`str`): time limit for each 'small' Slurm job.
-    - ``medium_walltime`` (`str`): time limit for each 'small' Slurm job.
+    - ``medium_walltime`` (`str`): time limit for each 'medium' Slurm job.
     - ``large_walltime`` (`str`): time limit for each 'large' Slurm job.
 
     """

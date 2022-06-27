@@ -12,8 +12,8 @@ from parsl.launchers import SrunLauncher
 from .slurm import TripleSlurm
 
 
-class Knl(TripleSlurm):
-    """Configuration for running jobs on the NERSC KNL cluster
+class CoriKnl(TripleSlurm):
+    """Configuration for running jobs on the NERSC Cori-KNL cluster
 
     The following BPS configuration parameters are recognised, overriding the
     defaults:
